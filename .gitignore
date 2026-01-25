@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+
+# Logs
+*.log
+flashcard_watcher_stdout.log
+flashcard_watcher_stderr.log
+menubar_stdout.log
+menubar_stderr.log
+
+# Config with secrets
+config.json
+
+# Usage stats (personal data)
+usage_stats.json
+
+# Screenshots (user data)
+screenshots/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Temporary files
+*.tmp
+*.temp

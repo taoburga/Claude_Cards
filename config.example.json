@@ -1,0 +1,13 @@
+{
+  "anthropic_api_key": "YOUR_API_KEY_HERE",
+  "anki_deck": "Concepts",
+  "anki_connect_url": "http://localhost:8765",
+  "screenshots_dir": "/path/to/Claude_Cards/screenshots",
+  "model": "claude-sonnet-4-20250514",
+  "include_image": "auto",
+  "preview_before_save": false,
+  "check_duplicates": true,
+  "card_types": ["basic"],
+  "extension_port": 8766,
+  "prompt": "Analyze this screenshot and create a flashcard for learning/memorization.\n\nThe screenshot contains information the user wants to remember. Extract the key concept and create a flashcard.\n\nReturn your response in this exact JSON format:\n{\n    \"front\": \"A clear, concise question or prompt that tests understanding of the concept\",\n    \"back\": \"The answer or explanation - be concise but complete\",\n    \"tags\": [\"tag1\", \"tag2\"],\n    \"has_diagram\": true or false,\n    \"cloze\": \"A sentence with {{c1::key term}} blanked out for fill-in-the-blank study\",\n    \"reverse_front\": \"The answer/definition that prompts recall of the term\",\n    \"reverse_back\": \"The term or concept being defined\"\n}\n\nGuidelines:\n- Front should be a question or fill-in-the-blank that tests recall\n- Back should directly answer the front, with key details\n- Include 1-3 relevant tags for categorization\n- Focus on the most important/memorable concept if there are multiple\n- Keep both sides concise - this is for quick review\n- Set has_diagram to true if the screenshot contains a diagram, chart, graph, image, or visual that is essential to understanding\n- For cloze, use {{c1::term}} syntax to mark the blank\n- For reverse, flip the card so the definition prompts recall of the term\n\nReturn ONLY the JSON, no other text."
+}
