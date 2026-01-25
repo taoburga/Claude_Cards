@@ -26,8 +26,8 @@ Create Anki flashcards from screenshots or selected text using Claude AI.
 ### 1. Clone and Setup
 
 ```bash
-git clone https://github.com/yourusername/claude-cards.git
-cd claude-cards
+git clone https://github.com/taoburga/Claude_Cards.git
+cd Claude_Cards
 
 # Install dependencies
 pip3 install -r requirements.txt

@@ -2,6 +2,19 @@
 
 > This file provides context for future Claude instances working on this project.
 
+## GitHub Repository
+
+**Repo:** https://github.com/taoburga/Claude_Cards (private)
+
+**Important:** When making significant changes to the codebase, remember to commit and push updates to the repo. The user may ask you to do this periodically.
+
+```bash
+cd /Users/taoburga/Desktop/Claude_Cards
+git add -A
+git commit -m "Description of changes"
+git push
+```
+
 ## Overview
 
 **Claude Cards** is a macOS app that creates Anki flashcards from screenshots using Claude's vision API. The user takes a screenshot of content they want to learn, and Claude automatically generates a flashcard and adds it to their Anki deck.
