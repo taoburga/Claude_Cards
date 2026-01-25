@@ -42,7 +42,7 @@ git push
 ### File Structure
 ```
 /Users/taoburga/Desktop/Claude_Cards/
-├── CLAUDE_CONTEXT.md          # This file - context for future Claude instances
+├── CLAUDE.md                  # This file - auto-loads for Claude sessions
 ├── capture_for_flashcard.sh   # Screenshot capture script (Cmd+Shift+1)
 ├── config.json                # All configuration options
 ├── flashcard_watcher.py       # Main Python daemon (watches for screenshots + HTTP server)
