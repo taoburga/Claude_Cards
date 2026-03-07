@@ -16,6 +16,7 @@ BASE_DIR = Path(__file__).parent
 CONFIG_PATH = BASE_DIR / 'config.json'
 LOG_PATH = BASE_DIR / 'flashcard_watcher.log'
 USAGE_PATH = BASE_DIR / 'usage_stats.json'
+PID_PATH = BASE_DIR / 'watcher.pid'
 WATCHER_SCRIPT = BASE_DIR / 'flashcard_watcher.py'
 
 # Available models
@@ -52,14 +53,24 @@ def save_config(config):
 
 
 def is_watcher_running():
-    """Check if the flashcard watcher is running."""
+    """Check if the flashcard watcher is running via PID file."""
     try:
-        result = subprocess.run(
-            ['pgrep', '-f', 'flashcard_watcher.py'],
-            capture_output=True,
-            text=True
-        )
-        return result.returncode == 0
+        if not PID_PATH.exists():
+            return False
+        pid = int(PID_PATH.read_text().strip())
+        # Check if process with this PID exists
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, ValueError):
+        # Process doesn't exist or invalid PID -- stale PID file
+        try:
+            PID_PATH.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return False
+    except PermissionError:
+        # Process exists but we can't signal it (shouldn't happen for our own process)
+        return True
     except Exception:
         return False
 
@@ -246,11 +257,7 @@ class ClaudeCardsApp(rumps.App):
         """Switch the Claude model."""
         self.config['model'] = model_id
         save_config(self.config)
-
-        # Restart watcher if running
-        if is_watcher_running():
-            self.stop_watcher(None)
-            self.start_watcher(None)
+        # No need to restart watcher -- it reloads config before each operation
 
         rumps.notification(
             "Model Changed",
@@ -351,10 +358,18 @@ class ClaudeCardsApp(rumps.App):
         self.setup_menu()
 
     def stop_watcher(self, _):
-        """Stop the flashcard watcher."""
+        """Stop the flashcard watcher using its PID file."""
         try:
-            subprocess.run(['pkill', '-f', 'flashcard_watcher.py'])
-            rumps.notification("Claude Cards", "", "Watcher stopped", sound=False)
+            if PID_PATH.exists():
+                pid = int(PID_PATH.read_text().strip())
+                os.kill(pid, 15)  # SIGTERM -- graceful shutdown
+                PID_PATH.unlink(missing_ok=True)
+                rumps.notification("Claude Cards", "", "Watcher stopped", sound=False)
+            else:
+                rumps.notification("Claude Cards", "", "Watcher not running", sound=False)
+        except ProcessLookupError:
+            PID_PATH.unlink(missing_ok=True)
+            rumps.notification("Claude Cards", "", "Watcher was not running", sound=False)
         except Exception as e:
             rumps.notification("Error", "", f"Could not stop watcher: {e}")
         self.setup_menu()

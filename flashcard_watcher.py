@@ -10,12 +10,14 @@ import json
 import time
 import base64
 import logging
+from logging.handlers import RotatingFileHandler
 import subprocess
 import re
 import threading
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+from collections import OrderedDict
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import anthropic
@@ -23,23 +25,44 @@ import requests
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(Path(__file__).parent / 'flashcard_watcher.log')
-    ]
-)
+# Setup logging with rotation (5MB per file, 3 backups = 20MB max)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+_log_format = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+_stream_handler = logging.StreamHandler()
+_stream_handler.setFormatter(_log_format)
+logger.addHandler(_stream_handler)
+_file_handler = RotatingFileHandler(
+    Path(__file__).parent / 'flashcard_watcher.log',
+    maxBytes=5 * 1024 * 1024,  # 5MB
+    backupCount=3
+)
+_file_handler.setFormatter(_log_format)
+logger.addHandler(_file_handler)
 
-# Load config
+# Paths
+PID_PATH = Path(__file__).parent / 'watcher.pid'
 CONFIG_PATH = Path(__file__).parent / 'config.json'
 USAGE_PATH = Path(__file__).parent / 'usage_stats.json'
 QUEUE_PATH = Path(__file__).parent / 'pending_cards.json'
+
+# Load config initially, but reload before each operation
 with open(CONFIG_PATH) as f:
     CONFIG = json.load(f)
+
+
+def reload_config():
+    """Reload config from disk so menu bar changes take effect immediately."""
+    global CONFIG
+    try:
+        saved_api_key = CONFIG.get('anthropic_api_key', '')
+        with open(CONFIG_PATH) as f:
+            CONFIG = json.load(f)
+        # Preserve the API key injected from keychain/env at startup
+        if saved_api_key and not CONFIG.get('anthropic_api_key'):
+            CONFIG['anthropic_api_key'] = saved_api_key
+    except Exception as e:
+        logger.warning(f"Could not reload config: {e}")
 
 # Model pricing per 1M tokens (as of 2025)
 MODEL_PRICING = {
@@ -47,6 +70,22 @@ MODEL_PRICING = {
     'claude-sonnet-4-20250514': {'input': 3.00, 'output': 15.00},
     'claude-opus-4-20250514': {'input': 15.00, 'output': 75.00},
 }
+
+
+def get_api_key_from_keychain() -> str:
+    """Retrieve API key from macOS Keychain. Returns empty string if not found."""
+    try:
+        result = subprocess.run(
+            ['security', 'find-generic-password', '-a', 'ClaudeCards', '-s', 'ClaudeCards', '-w'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return ''
 
 
 def load_pending_queue():
@@ -241,22 +280,6 @@ def get_chrome_context():
     return None
 
 
-def get_clipboard_text():
-    """Get text from clipboard as fallback."""
-    try:
-        result = subprocess.run(
-            ['pbpaste'],
-            capture_output=True,
-            text=True,
-            timeout=2
-        )
-        if result.returncode == 0:
-            return result.stdout.strip()
-    except Exception as e:
-        logger.warning(f"Could not get clipboard: {e}")
-    return None
-
-
 def clean_url(url: str) -> str:
     """Remove tracking parameters from URL."""
     if not url:
@@ -395,51 +418,6 @@ def format_source_attribution(source_info: dict, metadata: dict = None) -> str:
     return domain
 
 
-def format_source_attribution_legacy(source_info: dict, metadata: dict = None) -> str:
-    """Legacy function - kept for reference."""
-    if not source_info:
-        return ""
-
-    parts = []
-
-    # Site/publication name
-    site_name = metadata.get('siteName', '') if metadata else ''
-    if not site_name:
-        # Extract domain as fallback
-        try:
-            parsed = urlparse(source_info.get('url', ''))
-            site_name = parsed.netloc.replace('www.', '')
-        except:
-            pass
-
-    # Author
-    author = metadata.get('author', '') if metadata else ''
-
-    # Build attribution
-    if author and site_name:
-        parts.append(f"{author} on {site_name}")
-    elif site_name:
-        parts.append(site_name)
-    elif author:
-        parts.append(author)
-    else:
-        parts.append(source_info.get('title', 'Unknown source'))
-
-    # Add date if available
-    pub_date = metadata.get('publishDate', '') if metadata else ''
-    if pub_date:
-        # Try to format date nicely
-        try:
-            # Handle ISO format
-            if 'T' in pub_date:
-                pub_date = pub_date.split('T')[0]
-            parts.append(f"({pub_date})")
-        except:
-            pass
-
-    return ' '.join(parts)
-
-
 def encode_image_to_base64(image_path: Path) -> str:
     """Read image file and encode to base64."""
     with open(image_path, 'rb') as f:
@@ -459,85 +437,131 @@ def get_image_media_type(image_path: Path) -> str:
     return media_types.get(suffix, 'image/png')
 
 
+# Tool schema for structured flashcard output
+FLASHCARD_TOOL = {
+    "name": "create_flashcard",
+    "description": "Create an Anki flashcard from the provided content.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "front": {
+                "type": "string",
+                "description": "A clear, concise question or prompt that tests understanding of the concept"
+            },
+            "back": {
+                "type": "string",
+                "description": "The answer or explanation - be concise but complete"
+            },
+            "tags": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "1-3 relevant tags for categorization"
+            },
+            "cloze": {
+                "type": "string",
+                "description": "A sentence with {{c1::key term}} blanked out for cloze deletion cards"
+            },
+            "reverse_front": {
+                "type": "string",
+                "description": "The answer/definition that prompts recall of the term (for reverse cards)"
+            },
+            "reverse_back": {
+                "type": "string",
+                "description": "The term or concept being defined (for reverse cards)"
+            },
+            "has_diagram": {
+                "type": "boolean",
+                "description": "Whether the screenshot contains a diagram, chart, or visual that should be embedded in the card"
+            }
+        },
+        "required": ["front", "back", "tags"]
+    }
+}
+
+
+def _call_with_retry(fn, max_retries=3):
+    """Call a function with exponential backoff on failure."""
+    for attempt in range(max_retries):
+        try:
+            return fn()
+        except Exception as e:
+            if attempt == max_retries - 1:
+                raise
+            wait = 2 ** attempt  # 1s, 2s, 4s
+            logger.warning(f"API call failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {wait}s...")
+            time.sleep(wait)
+
+
+def _extract_flashcard_from_response(response) -> dict:
+    """Extract flashcard dict from a tool_use response."""
+    for block in response.content:
+        if block.type == "tool_use" and block.name == "create_flashcard":
+            return block.input
+    raise ValueError("Claude did not return a flashcard via tool_use")
+
+
 def create_flashcard_from_image(image_path: Path, source_info: dict = None, selected_text: str = None) -> dict:
-    """Send image to Claude API and get flashcard content."""
+    """Send image to Claude API and get flashcard content via tool_use."""
     client = anthropic.Anthropic(api_key=CONFIG['anthropic_api_key'])
 
     image_data = encode_image_to_base64(image_path)
     media_type = get_image_media_type(image_path)
 
-    # Build context sections
-    source_context = ""
-    if source_info:
-        source_context = f"\n\nSource context - URL: {source_info.get('url', 'Unknown')}, Page title: {source_info.get('title', 'Unknown')}"
+    # Build prompt
+    parts = ["Analyze this screenshot and create a flashcard for learning/memorization. "
+             "Extract the key concept. Front should test recall, not just recognition. "
+             "Keep both sides concise."]
 
-    selection_context = ""
     if selected_text:
-        selection_context = f"\n\n**IMPORTANT**: The user has highlighted/selected this specific text: \"{selected_text}\"\nFocus the flashcard on this selected content specifically."
+        parts.append(f'\nThe user has highlighted this text: "{selected_text}"\n'
+                     'Focus the flashcard on this selected content specifically.')
 
-    base_prompt = CONFIG.get('prompt', """Analyze this screenshot and create a flashcard for learning/memorization.
+    if source_info:
+        parts.append(f"\nSource context - URL: {source_info.get('url', 'Unknown')}, "
+                     f"Page title: {source_info.get('title', 'Unknown')}")
 
-The screenshot contains information the user wants to remember. Extract the key concept and create a flashcard.
+    # Allow custom prompt override but append it rather than replacing
+    custom_prompt = CONFIG.get('prompt', '')
+    if custom_prompt:
+        parts.append(f"\nAdditional instructions: {custom_prompt}")
 
-Return your response in this exact JSON format:
-{
-    "front": "A clear, concise question or prompt that tests understanding of the concept",
-    "back": "The answer or explanation - be concise but complete",
-    "tags": ["tag1", "tag2"]
-}
-
-Guidelines:
-- Front should be a question or fill-in-the-blank that tests recall
-- Back should directly answer the front, with key details
-- Include 1-3 relevant tags for categorization
-- Focus on the most important/memorable concept if there are multiple
-- Keep both sides concise - this is for quick review
-
-Return ONLY the JSON, no other text.""")
-
-    prompt = base_prompt + selection_context + source_context
+    prompt = '\n'.join(parts)
 
     model = CONFIG.get('model', 'claude-sonnet-4-20250514')
-    response = client.messages.create(
-        model=model,
-        max_tokens=1024,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": media_type,
-                            "data": image_data
-                        }
-                    },
-                    {
-                        "type": "text",
-                        "text": prompt
-                    }
-                ]
-            }
-        ]
-    )
 
-    # Track usage
-    if hasattr(response, 'usage'):
-        track_usage(
-            response.usage.input_tokens,
-            response.usage.output_tokens,
-            model
+    def _api_call():
+        return client.messages.create(
+            model=model,
+            max_tokens=1024,
+            tools=[FLASHCARD_TOOL],
+            tool_choice={"type": "tool", "name": "create_flashcard"},
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": media_type,
+                                "data": image_data
+                            }
+                        },
+                        {
+                            "type": "text",
+                            "text": prompt
+                        }
+                    ]
+                }
+            ]
         )
 
-    response_text = response.content[0].text.strip()
+    response = _call_with_retry(_api_call)
 
-    # Parse JSON from response (handle potential markdown code blocks)
-    if response_text.startswith('```'):
-        lines = response_text.split('\n')
-        response_text = '\n'.join(lines[1:-1])
+    if hasattr(response, 'usage'):
+        track_usage(response.usage.input_tokens, response.usage.output_tokens, model)
 
-    flashcard = json.loads(response_text)
+    flashcard = _extract_flashcard_from_response(response)
 
     # Add source info to the back if available (clean domain only)
     if source_info and source_info.get('url'):
@@ -545,7 +569,6 @@ Return ONLY the JSON, no other text.""")
         if domain:
             flashcard['back'] += f"\n\nSource: {domain}"
 
-    # Store clean source URL for potential separate Anki field
     if source_info:
         flashcard['source_url'] = source_info.get('url', '')
         flashcard['source_attribution'] = source_info.get('attribution', '')
@@ -612,10 +635,9 @@ def check_for_duplicates(front_text: str) -> list:
 
 
 def show_duplicate_warning(duplicates: list, new_front: str) -> str:
-    """Show warning about potential duplicates, return 'save', 'skip', or 'view'."""
-    dup_preview = duplicates[0]['front'][:80] if duplicates else ""
-    dup_preview = dup_preview.replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
-    new_preview = new_front[:80].replace('\\', '\\\\').replace('"', '\\"').replace('\n', ' ')
+    """Show warning about potential duplicates, return 'save' or 'skip'."""
+    dup_preview = _sanitize_for_applescript(duplicates[0]['front'][:80]) if duplicates else ""
+    new_preview = _sanitize_for_applescript(new_front[:80])
 
     script = f'''
     set theDialog to display dialog "Potential duplicate found!\\n\\nExisting card:\\n{dup_preview}...\\n\\nNew card:\\n{new_preview}..." with title "Duplicate Warning" buttons {{"Skip", "Save Anyway"}} default button "Skip" with icon caution
@@ -815,26 +837,36 @@ def add_to_anki_direct(flashcard: dict, image_path: Path = None) -> bool:
     return False
 
 
+def _sanitize_for_applescript(text: str) -> str:
+    """Sanitize text for safe use in AppleScript strings.
+
+    Strips all characters that could break out of an AppleScript quoted string.
+    """
+    # Remove backslashes and double quotes entirely (safest approach)
+    text = text.replace('\\', '').replace('"', "'")
+    # Remove control characters except newline
+    text = ''.join(c for c in text if c == '\n' or (ord(c) >= 32 and ord(c) < 127) or ord(c) > 127)
+    return text
+
+
 def send_notification(title: str, message: str):
     """Send macOS notification."""
-    # Escape special characters for AppleScript
-    message = message.replace('\\', '\\\\').replace('"', '\\"')
-    title = title.replace('\\', '\\\\').replace('"', '\\"')
-    script = f'''
-    display notification "{message}" with title "{title}"
-    '''
-    subprocess.run(['osascript', '-e', script], capture_output=True)
+    title = _sanitize_for_applescript(title)[:100]
+    message = _sanitize_for_applescript(message)[:200]
+    script = f'display notification "{message}" with title "{title}"'
+    subprocess.run(['osascript', '-e', script], capture_output=True, timeout=5)
 
 
 def show_preview_dialog(flashcard: dict) -> str:
     """Show a preview dialog and return user choice: 'save', 'skip', or 'edit'."""
-    front = flashcard['front'].replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
-    back_preview = flashcard['back'][:200].replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+    front = _sanitize_for_applescript(flashcard['front'])[:300]
+    back_preview = _sanitize_for_applescript(flashcard['back'][:200])
     if len(flashcard['back']) > 200:
         back_preview += '...'
 
+    dialog_text = f"FRONT:\\n{front}\\n\\nBACK:\\n{back_preview}"
     script = f'''
-    set theDialog to display dialog "FRONT:\\n{front}\\n\\nBACK:\\n{back_preview}" with title "Flashcard Preview" buttons {{"Skip", "Edit in Anki", "Save"}} default button "Save" with icon note
+    set theDialog to display dialog "{dialog_text}" with title "Flashcard Preview" buttons {{"Skip", "Edit in Anki", "Save"}} default button "Save" with icon note
     return button returned of theDialog
     '''
 
@@ -843,7 +875,7 @@ def show_preview_dialog(flashcard: dict) -> str:
             ['osascript', '-e', script],
             capture_output=True,
             text=True,
-            timeout=60  # 60 second timeout for user response
+            timeout=60
         )
         if result.returncode == 0:
             choice = result.stdout.strip()
@@ -853,7 +885,7 @@ def show_preview_dialog(flashcard: dict) -> str:
                 return "skip"
             elif choice == "Edit in Anki":
                 return "edit"
-        return "save"  # Default to save if dialog fails
+        return "save"
     except subprocess.TimeoutExpired:
         logger.warning("Preview dialog timed out, saving card")
         return "save"
@@ -865,8 +897,10 @@ def show_preview_dialog(flashcard: dict) -> str:
 class ScreenshotHandler(FileSystemEventHandler):
     """Handle new screenshot files."""
 
+    MAX_TRACKED_FILES = 1000
+
     def __init__(self):
-        self.processed_files = set()
+        self.processed_files = OrderedDict()  # bounded, preserves insertion order
         self.processing = set()
 
     def on_created(self, event):
@@ -879,18 +913,30 @@ class ScreenshotHandler(FileSystemEventHandler):
         if file_path.suffix.lower() not in ['.png', '.jpg', '.jpeg', '.gif', '.webp']:
             return
 
-        # Skip if already processed or processing
+        # Skip if already processed or currently processing
         if file_path in self.processed_files or file_path in self.processing:
             return
 
         self.processing.add(file_path)
 
-        # Wait a moment for file to be fully written
-        time.sleep(0.5)
+        # Wait until file size stabilizes (fully written to disk)
+        prev_size = -1
+        for _ in range(20):  # up to 10 seconds (20 * 0.5s)
+            time.sleep(0.5)
+            try:
+                curr_size = file_path.stat().st_size
+            except OSError:
+                break
+            if curr_size == prev_size and curr_size > 0:
+                break
+            prev_size = curr_size
 
         try:
             self.process_screenshot(file_path)
-            self.processed_files.add(file_path)
+            self.processed_files[file_path] = True
+            # Evict oldest entries to bound memory usage
+            while len(self.processed_files) > self.MAX_TRACKED_FILES:
+                self.processed_files.popitem(last=False)
         except Exception as e:
             logger.error(f"Error processing {file_path}: {e}")
             send_notification("Flashcard Error", f"Failed to process screenshot: {str(e)[:50]}")
@@ -899,6 +945,7 @@ class ScreenshotHandler(FileSystemEventHandler):
 
     def process_screenshot(self, file_path: Path):
         """Process a screenshot and create a flashcard."""
+        reload_config()
         logger.info(f"Processing: {file_path.name}")
 
         # Get Chrome context: URL, title, and selected text
@@ -927,14 +974,6 @@ class ScreenshotHandler(FileSystemEventHandler):
             logger.info(f"Source: {source_info.get('attribution', source_info.get('title', 'Unknown'))}")
             if selected_text:
                 logger.info(f"Selected text: {selected_text[:100]}{'...' if len(selected_text) > 100 else ''}")
-
-        # Fallback to clipboard if no selection from Chrome
-        if not selected_text:
-            clipboard = get_clipboard_text()
-            # Only use clipboard if it looks like recently copied text (not too long, not a URL)
-            if clipboard and len(clipboard) < 1000 and not clipboard.startswith('http'):
-                selected_text = clipboard
-                logger.info(f"Using clipboard: {selected_text[:100]}{'...' if len(selected_text) > 100 else ''}")
 
         # Create flashcard using Claude
         logger.info("Sending to Claude API...")
@@ -986,8 +1025,12 @@ class ExtensionRequestHandler(BaseHTTPRequestHandler):
         logger.debug(f"HTTP: {format % args}")
 
     def send_cors_headers(self):
-        """Send CORS headers for browser extension."""
-        self.send_header('Access-Control-Allow-Origin', '*')
+        """Send CORS headers for browser extension only."""
+        origin = self.headers.get('Origin', '')
+        # Only allow requests from our Chrome extension
+        if origin.startswith('chrome-extension://'):
+            self.send_header('Access-Control-Allow-Origin', origin)
+        # Block all other origins (no header = browser blocks the response)
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
 
@@ -1013,8 +1056,19 @@ class ExtensionRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         """Handle POST requests (create flashcard)."""
         if self.path == '/create-flashcard':
+            # Reject requests not from a Chrome extension
+            origin = self.headers.get('Origin', '')
+            if not origin.startswith('chrome-extension://'):
+                self.send_response(403)
+                self.end_headers()
+                return
+
             try:
-                content_length = int(self.headers['Content-Length'])
+                content_length = int(self.headers.get('Content-Length', 0))
+                if content_length > 1_000_000:  # 1MB max
+                    self.send_response(413)
+                    self.end_headers()
+                    return
                 body = self.rfile.read(content_length)
                 data = json.loads(body.decode())
 
@@ -1035,7 +1089,7 @@ class ExtensionRequestHandler(BaseHTTPRequestHandler):
                 self.send_cors_headers()
                 self.send_header('Content-Type', 'application/json')
                 self.end_headers()
-                self.wfile.write(json.dumps({'error': str(e)}).encode())
+                self.wfile.write(json.dumps({'error': 'Internal error'}).encode())
         else:
             self.send_response(404)
             self.end_headers()
@@ -1043,6 +1097,7 @@ class ExtensionRequestHandler(BaseHTTPRequestHandler):
 
 def process_extension_request(data: dict) -> dict:
     """Process a flashcard request from the browser extension."""
+    reload_config()
     selected_text = data.get('selected_text', '')
     url = data.get('url', '')
     title = data.get('title', '')
@@ -1095,53 +1150,32 @@ def process_extension_request(data: dict) -> dict:
 
 
 def create_flashcard_from_text(text: str, source_info: dict = None) -> dict:
-    """Create a flashcard from text (no image) using Claude API."""
+    """Create a flashcard from text (no image) using Claude API with tool_use."""
     client = anthropic.Anthropic(api_key=CONFIG['anthropic_api_key'])
 
-    source_context = ""
+    parts = [f'Create a flashcard for learning/memorization from this text:\n\n"{text}"']
+    parts.append("Focus on the key concept. Front should test recall, not just recognition. Keep both sides concise.")
+
     if source_info:
-        source_context = f"\n\nSource: {source_info.get('title', '')} - {source_info.get('url', '')}"
-
-    prompt = f"""Create a flashcard for learning/memorization from this text:
-
-"{text}"
-
-Return your response in this exact JSON format:
-{{
-    "front": "A clear, concise question or prompt that tests understanding",
-    "back": "The answer or explanation - be concise but complete",
-    "tags": ["tag1", "tag2"],
-    "cloze": "A sentence with {{{{c1::key term}}}} blanked out",
-    "reverse_front": "The answer/definition that prompts recall of the term",
-    "reverse_back": "The term or concept being defined"
-}}{source_context}
-
-Guidelines:
-- Focus on the key concept in the selected text
-- Front should test recall, not just recognition
-- Keep both sides concise
-
-Return ONLY the JSON, no other text."""
+        parts.append(f"\nSource: {source_info.get('title', '')} - {source_info.get('url', '')}")
 
     model = CONFIG.get('model', 'claude-sonnet-4-20250514')
-    response = client.messages.create(
-        model=model,
-        max_tokens=1024,
-        messages=[{"role": "user", "content": prompt}]
-    )
 
-    # Track usage
+    def _api_call():
+        return client.messages.create(
+            model=model,
+            max_tokens=1024,
+            tools=[FLASHCARD_TOOL],
+            tool_choice={"type": "tool", "name": "create_flashcard"},
+            messages=[{"role": "user", "content": '\n'.join(parts)}]
+        )
+
+    response = _call_with_retry(_api_call)
+
     if hasattr(response, 'usage'):
         track_usage(response.usage.input_tokens, response.usage.output_tokens, model)
 
-    response_text = response.content[0].text.strip()
-
-    # Parse JSON
-    if response_text.startswith('```'):
-        lines = response_text.split('\n')
-        response_text = '\n'.join(lines[1:-1])
-
-    flashcard = json.loads(response_text)
+    flashcard = _extract_flashcard_from_response(response)
 
     # Add source (clean domain only)
     if source_info and source_info.get('url'):
@@ -1171,14 +1205,26 @@ def main():
         logger.error(f"Screenshots directory does not exist: {screenshots_dir}")
         sys.exit(1)
 
-    # Get API key from config or environment
-    api_key = CONFIG.get('anthropic_api_key', '')
-    if api_key == 'YOUR_API_KEY_HERE' or not api_key:
+    # Get API key: Keychain > env var > config.json
+    api_key = get_api_key_from_keychain()
+    if not api_key:
         api_key = os.environ.get('ANTHROPIC_API_KEY', '')
     if not api_key:
-        logger.error("Please set your Anthropic API key in config.json or ANTHROPIC_API_KEY env var")
+        api_key = CONFIG.get('anthropic_api_key', '')
+        if api_key == 'YOUR_API_KEY_HERE':
+            api_key = ''
+    if not api_key:
+        logger.error(
+            "No API key found. Set it using one of:\n"
+            "  1. macOS Keychain: security add-generic-password -a ClaudeCards -s ClaudeCards -w 'sk-ant-...' -U\n"
+            "  2. Environment: export ANTHROPIC_API_KEY='sk-ant-...'\n"
+            "  3. config.json: set anthropic_api_key field"
+        )
         sys.exit(1)
     CONFIG['anthropic_api_key'] = api_key
+
+    # Write PID file for clean process management
+    PID_PATH.write_text(str(os.getpid()))
 
     logger.info(f"Watching: {screenshots_dir}")
     logger.info(f"Anki deck: {CONFIG['anki_deck']}")
@@ -1209,6 +1255,12 @@ def main():
     except KeyboardInterrupt:
         logger.info("Stopping watcher...")
         observer.stop()
+    finally:
+        # Clean up PID file
+        try:
+            PID_PATH.unlink(missing_ok=True)
+        except Exception:
+            pass
 
     observer.join()
 
