@@ -18,6 +18,14 @@ from pathlib import Path
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from collections import OrderedDict
+
+# Hide Python from macOS Dock (must run before any AppKit usage)
+try:
+    import AppKit
+    info = AppKit.NSBundle.mainBundle().infoDictionary()
+    info["LSBackgroundOnly"] = "1"
+except ImportError:
+    pass
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import anthropic
@@ -170,18 +178,31 @@ def process_pending_queue():
         )
 
 
-def queue_processor_loop():
-    """Background thread that processes pending cards when Anki becomes available."""
+def anki_launch_watcher():
+    """Wait for Anki to launch, then deliver queued cards.
+
+    Edge-triggered: only processes queue on the transition from
+    'Anki not running' to 'Anki running'. Sleeps longer when
+    queue is empty (near-zero overhead).
+    """
+    anki_was_running = False
     while True:
-        time.sleep(30)
         try:
-            # Only check Anki if there are pending cards
             queue = load_pending_queue()
-            if queue:
-                logger.debug(f"Queue has {len(queue)} pending card(s), checking Anki...")
+            if not queue:
+                anki_was_running = False
+                time.sleep(30)  # Nothing to deliver, sleep long
+                continue
+
+            # Queue has items -- check more frequently for Anki
+            time.sleep(5)
+            anki_running = is_anki_available()
+            if anki_running and not anki_was_running:
+                logger.info("Anki detected, processing pending queue...")
                 process_pending_queue()
+            anki_was_running = anki_running
         except Exception as e:
-            logger.debug(f"Queue processor: {e}")
+            logger.debug(f"Anki watcher: {e}")
 
 
 def load_usage_stats():
@@ -902,6 +923,7 @@ class ScreenshotHandler(FileSystemEventHandler):
     def __init__(self):
         self.processed_files = OrderedDict()  # bounded, preserves insertion order
         self.processing = set()
+        self._lock = threading.Lock()
 
     def on_created(self, event):
         if event.is_directory:
@@ -913,11 +935,11 @@ class ScreenshotHandler(FileSystemEventHandler):
         if file_path.suffix.lower() not in ['.png', '.jpg', '.jpeg', '.gif', '.webp']:
             return
 
-        # Skip if already processed or currently processing
-        if file_path in self.processed_files or file_path in self.processing:
-            return
-
-        self.processing.add(file_path)
+        # Thread-safe guard against duplicate events from watchdog
+        with self._lock:
+            if file_path in self.processed_files or file_path in self.processing:
+                return
+            self.processing.add(file_path)
 
         # Wait until file size stabilizes (fully written to disk)
         prev_size = -1
@@ -1240,8 +1262,8 @@ def main():
     extension_thread = threading.Thread(target=start_extension_server, daemon=True)
     extension_thread.start()
 
-    # Start queue processor in background thread
-    queue_thread = threading.Thread(target=queue_processor_loop, daemon=True)
+    # Start Anki launch watcher in background thread
+    queue_thread = threading.Thread(target=anki_launch_watcher, daemon=True)
     queue_thread.start()
 
     event_handler = ScreenshotHandler()

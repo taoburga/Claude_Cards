@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claudecards.flashcardwatcher</string>
+    <key>ProgramArguments</key>
+    <array>
+        <!-- Update this to your Python 3 path (run: which python3) -->
+        <string>/usr/local/bin/python3</string>
+        <!-- Update this to your Claude_Cards path -->
+        <string>/path/to/Claude_Cards/flashcard_watcher.py</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <!-- Update this to your Claude_Cards path -->
+    <string>/path/to/Claude_Cards</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/path/to/Claude_Cards/flashcard_watcher_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/path/to/Claude_Cards/flashcard_watcher_stderr.log</string>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

@@ -7,9 +7,18 @@ Provides status, model switching, and quick access to the flashcard system.
 import os
 import json
 import subprocess
-import rumps
 from pathlib import Path
 from datetime import datetime
+
+# Hide Python rocket from macOS Dock (must run before rumps import)
+try:
+    import AppKit
+    info = AppKit.NSBundle.mainBundle().infoDictionary()
+    info["LSBackgroundOnly"] = "1"
+except ImportError:
+    pass
+
+import rumps
 
 # Paths
 BASE_DIR = Path(__file__).parent

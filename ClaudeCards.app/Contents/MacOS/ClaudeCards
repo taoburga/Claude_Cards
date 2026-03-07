@@ -2,4 +2,5 @@
 # Claude Cards - Screenshot Capture App
 # Drag this app to your Dock for quick access
 
-/Users/taoburga/Desktop/Claude_Cards/capture_for_flashcard.sh
+SCRIPT_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
+"$SCRIPT_DIR/capture_for_flashcard.sh"

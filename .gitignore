@@ -34,6 +34,14 @@ screenshots/
 *.swp
 *.swo
 
-# Temporary files
+# Runtime files
+pending_cards.json
+watcher.pid
 *.tmp
 *.temp
+
+# Claude Code worktrees
+.claude/
+
+# R history (stray file)
+.Rhistory

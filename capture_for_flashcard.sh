@@ -2,7 +2,9 @@
 # Capture screenshot for flashcard creation
 # Triggered by Cmd+Shift+1 via Automator Quick Action
 
-SCREENSHOTS_DIR="$HOME/Desktop/Claude_Cards/screenshots"
+# Resolve the directory where this script lives
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCREENSHOTS_DIR="$SCRIPT_DIR/screenshots"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 FILENAME="flashcard_${TIMESTAMP}.png"
 
@@ -14,6 +16,6 @@ screencapture -i "$SCREENSHOTS_DIR/$FILENAME"
 
 # Check if file was created (user didn't cancel)
 if [ -f "$SCREENSHOTS_DIR/$FILENAME" ]; then
-    # Optional: play sound to confirm capture
+    # Play sound to confirm capture
     afplay /System/Library/Sounds/Tink.aiff &
 fi
