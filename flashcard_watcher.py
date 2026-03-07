@@ -461,38 +461,38 @@ def get_image_media_type(image_path: Path) -> str:
 # Tool schema for structured flashcard output
 FLASHCARD_TOOL = {
     "name": "create_flashcard",
-    "description": "Create an Anki flashcard from the provided content.",
+    "description": "Create an Anki flashcard following the minimum information principle: one atomic fact per card, one unambiguous answer, context-free.",
     "input_schema": {
         "type": "object",
         "properties": {
             "front": {
                 "type": "string",
-                "description": "A clear, concise question or prompt that tests understanding of the concept"
+                "description": "A precise question that tests recall of exactly ONE fact. Must constrain the answer space (not 'Tell me about X' but 'What mechanism causes X?'). No yes/no questions. Must be context-free (understandable without the source material)."
             },
             "back": {
                 "type": "string",
-                "description": "The answer or explanation - be concise but complete"
+                "description": "The answer: just the fact, no filler. Aim for under 15 words. If longer, the card probably needs splitting."
             },
             "tags": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "1-3 relevant tags for categorization"
+                "description": "1-3 broad category tags, lowercase with hyphens (e.g. 'biology', 'machine-learning'). No page numbers or chapter references."
             },
             "cloze": {
                 "type": "string",
-                "description": "A sentence with {{c1::key term}} blanked out for cloze deletion cards"
+                "description": "A single sentence with exactly ONE {{c1::key term}} deletion. Delete the important keyword, not filler words. Good: 'The mitochondria is the {{c1::powerhouse}} of the cell'. Bad: multiple deletions."
             },
             "reverse_front": {
                 "type": "string",
-                "description": "The answer/definition that prompts recall of the term (for reverse cards)"
+                "description": "The definition/description that prompts recall of the term. Only useful when both directions matter (vocabulary, terminology)."
             },
             "reverse_back": {
                 "type": "string",
-                "description": "The term or concept being defined (for reverse cards)"
+                "description": "The term or concept being defined."
             },
             "has_diagram": {
                 "type": "boolean",
-                "description": "Whether the screenshot contains a diagram, chart, or visual that should be embedded in the card"
+                "description": "True ONLY if the screenshot contains a diagram, chart, graph, or visual that is essential to understanding the concept. A screenshot of text paragraphs is NOT a diagram."
             }
         },
         "required": ["front", "back", "tags"]
@@ -528,10 +528,15 @@ def create_flashcard_from_image(image_path: Path, source_info: dict = None, sele
     image_data = encode_image_to_base64(image_path)
     media_type = get_image_media_type(image_path)
 
-    # Build prompt
-    parts = ["Analyze this screenshot and create a flashcard for learning/memorization. "
-             "Extract the key concept. Front should test recall, not just recognition. "
-             "Keep both sides concise."]
+    # Build prompt (follows minimum information principle and 20 rules of formulating knowledge)
+    parts = [
+        "Create a flashcard from this screenshot. Rules:\n"
+        "- ONE atomic fact per card. If the content has multiple concepts, pick the most important one.\n"
+        "- Front: a precise question with exactly one unambiguous correct answer. Test recall, not recognition.\n"
+        "- Back: just the answer, under 15 words if possible. No filler.\n"
+        "- The card must be understandable without seeing the screenshot.\n"
+        "- Skip trivia. Focus on concepts, relationships, and mental models worth remembering."
+    ]
 
     if selected_text:
         parts.append(f'\nThe user has highlighted this text: "{selected_text}"\n'
@@ -1175,8 +1180,15 @@ def create_flashcard_from_text(text: str, source_info: dict = None) -> dict:
     """Create a flashcard from text (no image) using Claude API with tool_use."""
     client = anthropic.Anthropic(api_key=CONFIG['anthropic_api_key'])
 
-    parts = [f'Create a flashcard for learning/memorization from this text:\n\n"{text}"']
-    parts.append("Focus on the key concept. Front should test recall, not just recognition. Keep both sides concise.")
+    parts = [
+        "Create a flashcard from this text. Rules:\n"
+        "- ONE atomic fact per card. Pick the most important concept.\n"
+        "- Front: a precise question with exactly one unambiguous correct answer.\n"
+        "- Back: just the answer, under 15 words if possible. No filler.\n"
+        "- The card must be understandable without seeing the source text.\n"
+        "- Skip trivia. Focus on concepts, relationships, and mental models worth remembering.\n"
+        f'\nText:\n"{text}"'
+    ]
 
     if source_info:
         parts.append(f"\nSource: {source_info.get('title', '')} - {source_info.get('url', '')}")
