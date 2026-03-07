@@ -90,7 +90,7 @@ Copy `config.example.json` to `config.json` and configure:
 |-----|-------------|---------|
 | `anthropic_api_key` | API key (prefer Keychain instead) | `""` |
 | `anki_deck` | Target Anki deck name | `"Concepts"` |
-| `model` | Claude model | `"claude-sonnet-4-20250514"` |
+| `model` | Claude model | `"claude-sonnet-4-6"` |
 | `include_image` | Embed screenshots: auto/always/never | `"auto"` |
 | `card_types` | Array of: basic, cloze, reverse | `["basic"]` |
 | `preview_before_save` | Show preview dialog | `false` |

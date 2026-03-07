@@ -72,8 +72,12 @@ def reload_config():
     except Exception as e:
         logger.warning(f"Could not reload config: {e}")
 
-# Model pricing per 1M tokens (as of 2025)
+# Model pricing per 1M tokens (as of Feb 2026)
 MODEL_PRICING = {
+    'claude-haiku-4-5': {'input': 1.00, 'output': 5.00},
+    'claude-sonnet-4-6': {'input': 3.00, 'output': 15.00},
+    'claude-opus-4-6': {'input': 5.00, 'output': 25.00},
+    # Legacy model IDs (still work)
     'claude-3-5-haiku-20241022': {'input': 0.80, 'output': 4.00},
     'claude-sonnet-4-20250514': {'input': 3.00, 'output': 15.00},
     'claude-opus-4-20250514': {'input': 15.00, 'output': 75.00},
@@ -240,7 +244,7 @@ def track_usage(input_tokens: int, output_tokens: int, model: str):
     stats['cards_created'] += 1
 
     # Calculate cost
-    pricing = MODEL_PRICING.get(model, MODEL_PRICING['claude-sonnet-4-20250514'])
+    pricing = MODEL_PRICING.get(model, MODEL_PRICING['claude-sonnet-4-6'])
     cost = (input_tokens / 1_000_000 * pricing['input']) + (output_tokens / 1_000_000 * pricing['output'])
     stats['total_cost'] += cost
 
@@ -439,6 +443,28 @@ def format_source_attribution(source_info: dict, metadata: dict = None) -> str:
     return domain
 
 
+def format_source_html(source_info: dict) -> str:
+    """Format a clean source line as HTML for the back of a card.
+
+    Returns a small, hyperlinked domain name or empty string if source is
+    useless (search engines, redirects, empty).
+    """
+    if not source_info:
+        return ""
+
+    url = source_info.get('url', '')
+    domain = get_clean_domain(url)
+    if not domain:
+        return ""
+
+    # Hyperlink the domain to the full URL
+    return (
+        f'<br><br><small style="color: #888;">'
+        f'<a href="{url}" style="color: #888; text-decoration: none;">{domain}</a>'
+        f'</small>'
+    )
+
+
 def encode_image_to_base64(image_path: Path) -> str:
     """Read image file and encode to base64."""
     with open(image_path, 'rb') as f:
@@ -493,6 +519,10 @@ FLASHCARD_TOOL = {
             "has_diagram": {
                 "type": "boolean",
                 "description": "True ONLY if the screenshot contains a diagram, chart, graph, or visual that is essential to understanding the concept. A screenshot of text paragraphs is NOT a diagram."
+            },
+            "hint": {
+                "type": "string",
+                "description": "Optional 2-5 word mnemonic hint shown when the user is stuck (e.g. 'Think about energy...'). Only include if the card is non-obvious."
             }
         },
         "required": ["front", "back", "tags"]
@@ -521,7 +551,8 @@ def _extract_flashcard_from_response(response) -> dict:
     raise ValueError("Claude did not return a flashcard via tool_use")
 
 
-def create_flashcard_from_image(image_path: Path, source_info: dict = None, selected_text: str = None) -> dict:
+def create_flashcard_from_image(image_path: Path, source_info: dict = None,
+                                selected_text: str = None, focus_prompt: str = None) -> dict:
     """Send image to Claude API and get flashcard content via tool_use."""
     client = anthropic.Anthropic(api_key=CONFIG['anthropic_api_key'])
 
@@ -538,6 +569,9 @@ def create_flashcard_from_image(image_path: Path, source_info: dict = None, sele
         "- Skip trivia. Focus on concepts, relationships, and mental models worth remembering."
     ]
 
+    if focus_prompt:
+        parts.append(f'\nThe user wants the card to focus on: "{focus_prompt}"')
+
     if selected_text:
         parts.append(f'\nThe user has highlighted this text: "{selected_text}"\n'
                      'Focus the flashcard on this selected content specifically.')
@@ -553,7 +587,7 @@ def create_flashcard_from_image(image_path: Path, source_info: dict = None, sele
 
     prompt = '\n'.join(parts)
 
-    model = CONFIG.get('model', 'claude-sonnet-4-20250514')
+    model = CONFIG.get('model', 'claude-sonnet-4-6')
 
     def _api_call():
         return client.messages.create(
@@ -589,11 +623,10 @@ def create_flashcard_from_image(image_path: Path, source_info: dict = None, sele
 
     flashcard = _extract_flashcard_from_response(response)
 
-    # Add source info to the back if available (clean domain only)
-    if source_info and source_info.get('url'):
-        domain = get_clean_domain(source_info['url'])
-        if domain:
-            flashcard['back'] += f"\n\nSource: {domain}"
+    # Add source as a small hyperlinked domain on the back of the card
+    source_html = format_source_html(source_info)
+    if source_html:
+        flashcard['back'] += source_html
 
     if source_info:
         flashcard['source_url'] = source_info.get('url', '')
@@ -778,6 +811,14 @@ def add_to_anki_direct(flashcard: dict, image_path: Path = None) -> bool:
         try:
             if card_type == 'basic':
                 # Standard Q&A card
+                front_content = flashcard['front']
+                hint = flashcard.get('hint', '')
+                if hint:
+                    front_content += (
+                        f'<br><br><details><summary style="color: #888; font-size: 0.8em; '
+                        f'cursor: pointer;">Hint</summary>'
+                        f'<span style="color: #888; font-size: 0.85em;">{hint}</span></details>'
+                    )
                 back_content = flashcard['back'] + image_html
                 note_data = {
                     'action': 'addNote',
@@ -787,7 +828,7 @@ def add_to_anki_direct(flashcard: dict, image_path: Path = None) -> bool:
                             'deckName': CONFIG['anki_deck'],
                             'modelName': 'Basic',
                             'fields': {
-                                'Front': flashcard['front'],
+                                'Front': front_content,
                                 'Back': back_content
                             },
                             'tags': flashcard.get('tags', []) + ['claude-cards', 'basic']
@@ -873,6 +914,40 @@ def _sanitize_for_applescript(text: str) -> str:
     # Remove control characters except newline
     text = ''.join(c for c in text if c == '\n' or (ord(c) >= 32 and ord(c) < 127) or ord(c) > 127)
     return text
+
+
+def ask_focus_prompt() -> str:
+    """Show a quick dialog asking what the card should focus on.
+
+    Returns the user's text, or empty string if they skip/cancel/dialog fails.
+    Completely optional -- any failure silently returns empty string.
+    """
+    script = '''
+    try
+        set dialogResult to display dialog "What should the card focus on?" & return & "(Leave blank for auto)" default answer "" buttons {"Skip", "OK"} default button "OK" with title "Claude Cards" giving up after 30
+        if gave up of dialogResult then
+            return ""
+        end if
+        if button returned of dialogResult is "OK" then
+            return text returned of dialogResult
+        end if
+        return ""
+    on error
+        return ""
+    end try
+    '''
+    try:
+        result = subprocess.run(
+            ['osascript', '-e', script],
+            capture_output=True,
+            text=True,
+            timeout=35
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except Exception as e:
+        logger.debug(f"Focus prompt dialog skipped: {e}")
+    return ""
 
 
 def send_notification(title: str, message: str):
@@ -975,6 +1050,15 @@ class ScreenshotHandler(FileSystemEventHandler):
         reload_config()
         logger.info(f"Processing: {file_path.name}")
 
+        # Only show focus dialog if guided capture flag exists (Cmd+Shift+2)
+        focus_flag = Path(CONFIG_PATH).parent / '.ask_focus'
+        focus_prompt = ""
+        if focus_flag.exists():
+            focus_flag.unlink(missing_ok=True)
+            focus_prompt = ask_focus_prompt()
+            if focus_prompt:
+                logger.info(f"User focus: {focus_prompt[:80]}")
+
         # Get Chrome context: URL, title, and selected text
         chrome_context = get_chrome_context()
         source_info = None
@@ -1004,7 +1088,7 @@ class ScreenshotHandler(FileSystemEventHandler):
 
         # Create flashcard using Claude
         logger.info("Sending to Claude API...")
-        flashcard = create_flashcard_from_image(file_path, source_info, selected_text)
+        flashcard = create_flashcard_from_image(file_path, source_info, selected_text, focus_prompt)
         logger.info(f"Flashcard created: {flashcard['front'][:50]}...")
 
         # Check for duplicates
@@ -1193,7 +1277,7 @@ def create_flashcard_from_text(text: str, source_info: dict = None) -> dict:
     if source_info:
         parts.append(f"\nSource: {source_info.get('title', '')} - {source_info.get('url', '')}")
 
-    model = CONFIG.get('model', 'claude-sonnet-4-20250514')
+    model = CONFIG.get('model', 'claude-sonnet-4-6')
 
     def _api_call():
         return client.messages.create(
@@ -1211,11 +1295,10 @@ def create_flashcard_from_text(text: str, source_info: dict = None) -> dict:
 
     flashcard = _extract_flashcard_from_response(response)
 
-    # Add source (clean domain only)
-    if source_info and source_info.get('url'):
-        domain = get_clean_domain(source_info['url'])
-        if domain:
-            flashcard['back'] += f"\n\nSource: {domain}"
+    # Add source as a small hyperlinked domain on the back of the card
+    source_html = format_source_html(source_info)
+    if source_html:
+        flashcard['back'] += source_html
 
     return flashcard
 

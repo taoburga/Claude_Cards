@@ -37,6 +37,7 @@ screenshots/
 # Runtime files
 pending_cards.json
 watcher.pid
+.ask_focus
 *.tmp
 *.temp
 

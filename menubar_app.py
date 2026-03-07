@@ -30,9 +30,9 @@ WATCHER_SCRIPT = BASE_DIR / 'flashcard_watcher.py'
 
 # Available models
 MODELS = {
-    'Haiku (Fast)': 'claude-3-5-haiku-20241022',
-    'Sonnet (Balanced)': 'claude-sonnet-4-20250514',
-    'Opus (Best)': 'claude-opus-4-20250514',
+    'Haiku (Fast)': 'claude-haiku-4-5',
+    'Sonnet (Balanced)': 'claude-sonnet-4-6',
+    'Opus (Best)': 'claude-opus-4-6',
 }
 
 # Image inclusion options
@@ -184,7 +184,7 @@ class ClaudeCardsApp(rumps.App):
         self.menu.add(rumps.separator)
 
         # Model switcher
-        current_model = self.config.get('model', 'claude-sonnet-4-20250514')
+        current_model = self.config.get('model', 'claude-sonnet-4-6')
         model_menu = rumps.MenuItem("Model")
         for name, model_id in MODELS.items():
             item = rumps.MenuItem(

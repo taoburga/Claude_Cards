@@ -126,7 +126,7 @@ Edit `config.json` to customize:
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `model` | Claude model to use | `claude-sonnet-4-20250514` |
+| `model` | Claude model to use | `claude-sonnet-4-6` |
 | `include_image` | When to embed screenshots | `auto` (only for diagrams) |
 | `card_types` | Which card formats to create | `["basic"]` |
 | `preview_before_save` | Show dialog before saving | `false` |
@@ -134,9 +134,9 @@ Edit `config.json` to customize:
 | `anki_deck` | Target Anki deck | `"Concepts"` |
 
 Available models:
-- `claude-3-5-haiku-20241022` - Fast and cheap (~$0.001/card)
-- `claude-sonnet-4-20250514` - Balanced (recommended)
-- `claude-opus-4-20250514` - Best quality
+- `claude-haiku-4-5` - Fast and cheap (~$0.001/card)
+- `claude-sonnet-4-6` - Balanced (recommended)
+- `claude-opus-4-6` - Best quality
 
 ## Troubleshooting
 

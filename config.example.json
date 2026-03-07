@@ -3,7 +3,7 @@
   "anki_deck": "Concepts",
   "anki_connect_url": "http://localhost:8765",
   "screenshots_dir": "",
-  "model": "claude-sonnet-4-20250514",
+  "model": "claude-sonnet-4-6",
   "include_image": "auto",
   "preview_before_save": false,
   "check_duplicates": true,
