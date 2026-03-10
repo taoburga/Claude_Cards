@@ -9,6 +9,7 @@ import sys
 import json
 import time
 import base64
+import html as html_module
 import logging
 from logging.handlers import RotatingFileHandler
 import subprocess
@@ -142,7 +143,7 @@ def is_anki_available() -> bool:
             timeout=2
         )
         return response.status_code == 200
-    except:
+    except Exception:
         return False
 
 
@@ -417,7 +418,7 @@ def get_clean_domain(url: str) -> str:
         if any(skip in domain for skip in skip_domains):
             return ""
         return domain
-    except:
+    except Exception:
         return ""
 
 
@@ -457,10 +458,21 @@ def format_source_html(source_info: dict) -> str:
     if not domain:
         return ""
 
-    # Hyperlink the domain to the full URL
+    # Only allow http/https URLs to prevent javascript: and data: XSS
+    try:
+        scheme = urlparse(url).scheme.lower()
+        if scheme not in ('http', 'https'):
+            return ""
+    except Exception:
+        return ""
+
+    # Escape for safe HTML attribute/content insertion
+    safe_url = html_module.escape(url, quote=True)
+    safe_domain = html_module.escape(domain)
+
     return (
         f'<br><br><small style="color: #888;">'
-        f'<a href="{url}" style="color: #888; text-decoration: none;">{domain}</a>'
+        f'<a href="{safe_url}" style="color: #888; text-decoration: none;">{safe_domain}</a>'
         f'</small>'
     )
 
@@ -800,7 +812,8 @@ def add_to_anki_direct(flashcard: dict, image_path: Path = None) -> bool:
     if should_include_image and image_path:
         image_filename = store_image_in_anki(image_path)
         if image_filename:
-            image_html = f'\n\n<img src="{image_filename}" style="max-width: 100%;">'
+            safe_filename = html_module.escape(image_filename, quote=True)
+            image_html = f'\n\n<img src="{safe_filename}" style="max-width: 100%;">'
             logger.info(f"Stored image: {image_filename}")
 
     # Get configured card types
@@ -814,10 +827,11 @@ def add_to_anki_direct(flashcard: dict, image_path: Path = None) -> bool:
                 front_content = flashcard['front']
                 hint = flashcard.get('hint', '')
                 if hint:
+                    safe_hint = html_module.escape(hint)
                     front_content += (
                         f'<br><br><details><summary style="color: #888; font-size: 0.8em; '
                         f'cursor: pointer;">Hint</summary>'
-                        f'<span style="color: #888; font-size: 0.85em;">{hint}</span></details>'
+                        f'<span style="color: #888; font-size: 0.85em;">{safe_hint}</span></details>'
                     )
                 back_content = flashcard['back'] + image_html
                 note_data = {
@@ -1131,6 +1145,23 @@ class ScreenshotHandler(FileSystemEventHandler):
 class ExtensionRequestHandler(BaseHTTPRequestHandler):
     """HTTP handler for browser extension requests."""
 
+    # Simple rate limiter: max 10 requests per 60 seconds
+    _request_times = []
+    _rate_lock = threading.Lock()
+    _RATE_LIMIT = 10
+    _RATE_WINDOW = 60  # seconds
+
+    def _is_rate_limited(self) -> bool:
+        """Check if request should be rejected due to rate limiting."""
+        now = time.time()
+        with self._rate_lock:
+            # Purge old entries
+            self._request_times[:] = [t for t in self._request_times if now - t < self._RATE_WINDOW]
+            if len(self._request_times) >= self._RATE_LIMIT:
+                return True
+            self._request_times.append(now)
+            return False
+
     def log_message(self, format, *args):
         """Override to use our logger."""
         logger.debug(f"HTTP: {format % args}")
@@ -1172,6 +1203,14 @@ class ExtensionRequestHandler(BaseHTTPRequestHandler):
             if not origin.startswith('chrome-extension://'):
                 self.send_response(403)
                 self.end_headers()
+                return
+
+            # Rate limit to prevent API credit abuse
+            if self._is_rate_limited():
+                self.send_response(429)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'Rate limit exceeded. Try again later.'}).encode())
                 return
 
             try:
@@ -1257,7 +1296,7 @@ def process_extension_request(data: dict) -> dict:
 
     except Exception as e:
         logger.error(f"Error processing extension request: {e}")
-        return {'error': str(e)}
+        return {'error': 'Failed to create flashcard. Check watcher logs for details.'}
 
 
 def create_flashcard_from_text(text: str, source_info: dict = None) -> dict:
@@ -1316,10 +1355,17 @@ def start_extension_server():
 
 def main():
     """Main entry point."""
-    screenshots_dir = Path(CONFIG['screenshots_dir'])
+    screenshots_dir_str = CONFIG.get('screenshots_dir', '')
+    if not screenshots_dir_str:
+        # Default to screenshots/ subfolder if not configured
+        screenshots_dir_str = str(Path(__file__).parent / 'screenshots')
+        logger.info(f"No screenshots_dir configured, defaulting to: {screenshots_dir_str}")
 
-    if not screenshots_dir.exists():
-        logger.error(f"Screenshots directory does not exist: {screenshots_dir}")
+    screenshots_dir = Path(screenshots_dir_str)
+    screenshots_dir.mkdir(parents=True, exist_ok=True)
+
+    if not screenshots_dir.is_dir():
+        logger.error(f"Screenshots path is not a directory: {screenshots_dir}")
         sys.exit(1)
 
     # Get API key: Keychain > env var > config.json
