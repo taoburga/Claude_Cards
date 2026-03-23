@@ -30,26 +30,25 @@ Browser Extension  ──▶  HTTP server (port 8766)  ────────�
 - **Event-driven file watching** via watchdog/FSEvents (not polling)
 - **Edge-triggered queue**: only delivers queued cards on Anki launch detection, sleeps when queue is empty
 - **Thread-safe** duplicate event guard (watchdog can fire multiple events per file)
-- **Config hot-reload**: menu bar changes take effect without restarting the watcher
+- **Web dashboard** at `localhost:8766` for config editing and usage stats (no extra dependencies)
+- **Config hot-reload**: dashboard changes take effect without restarting the watcher
 
 ## File Structure
 
 ```
 Claude_Cards/
-├── flashcard_watcher.py       # Main daemon: file watcher + Claude API + AnkiConnect + HTTP server
-├── menubar_app.py             # macOS menu bar app (rumps): status, settings, model switcher
+├── flashcard_watcher.py       # Main daemon: file watcher + Claude API + AnkiConnect + HTTP server + dashboard
 ├── capture_for_flashcard.sh   # Screenshot capture script (called by Automator)
 ├── config.example.json        # Template config (copy to config.json)
-├── requirements.txt           # Python deps: watchdog, anthropic, requests, rumps
+├── requirements.txt           # Python deps: watchdog, anthropic, requests
 ├── browser_extension/         # Chrome extension for text selection → flashcard
 │   ├── manifest.json
 │   ├── background.js
 │   ├── popup.html / popup.js
 │   └── icons/
-├── ClaudeCards.app/           # macOS app bundle for Dock/Spotlight capture
-├── launchagents/              # Template LaunchAgent plists for auto-start
-│   ├── com.claudecards.flashcardwatcher.plist
-│   └── com.claudecards.menubar.plist
+├── ClaudeCards.app/           # macOS app bundle — opens web dashboard
+├── launchagents/              # Template LaunchAgent plist for auto-start
+│   └── com.claudecards.flashcardwatcher.plist
 ├── CLAUDE.md                  # This file
 ├── README.md                  # User-facing documentation
 ├── LICENSE                    # MIT
@@ -110,8 +109,23 @@ security add-generic-password -a ClaudeCards -s ClaudeCards -w 'sk-ant-...' -U
 - API errors return generic messages (no internal details leaked)
 - Log rotation prevents unbounded disk usage
 
+## Dashboard
+
+The watcher serves a web dashboard at `http://localhost:8766` for:
+- Viewing usage stats (cards created, API costs, today's activity)
+- Editing settings (model, deck, card types, image inclusion, duplicates, preview)
+- Editing the system prompt
+
+The `ClaudeCards.app` opens this dashboard in the default browser.
+
+API endpoints:
+- `GET /` — Dashboard HTML
+- `GET /api/config` — Current config (API key excluded)
+- `POST /api/config` — Update config (whitelisted fields only)
+- `GET /api/usage` — Usage statistics
+
 ## Dependencies
 - Python 3.10+
 - macOS (uses AppleScript, FSEvents, Keychain, Automator)
 - Anki with AnkiConnect add-on (code: 2055492159)
-- pip packages: `watchdog`, `anthropic`, `requests`, `rumps`
+- pip packages: `watchdog`, `anthropic`, `requests`

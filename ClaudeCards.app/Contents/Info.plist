@@ -5,7 +5,7 @@
     <key>CFBundleExecutable</key>
     <string>ClaudeCards</string>
     <key>CFBundleIdentifier</key>
-    <string>com.claudecards.capture</string>
+    <string>com.claudecards.dashboard</string>
     <key>CFBundleName</key>
     <string>Claude Cards</string>
     <key>CFBundleDisplayName</key>

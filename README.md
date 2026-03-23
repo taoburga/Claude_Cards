@@ -11,7 +11,7 @@ Create Anki flashcards from screenshots or selected text using Claude AI.
 - **Multiple Card Types**: Generate Basic, Cloze (fill-in-the-blank), and Reverse cards from the same content.
 - **Duplicate Detection**: Warns you if a similar card already exists.
 - **Image Embedding**: For diagrams and charts, the screenshot is embedded in your Anki card.
-- **Menu Bar App**: Switch models, toggle settings, and see usage stats at a glance.
+- **Web Dashboard**: Switch models, toggle settings, and see usage stats — open `ClaudeCards.app` or visit `localhost:8766`.
 - **Cost Tracking**: Monitor your API usage and costs per day/month.
 - **Offline Queue**: Cards are saved when Anki isn't running and delivered automatically when it opens.
 
@@ -76,22 +76,16 @@ cp config.example.json config.json
 python3 flashcard_watcher.py
 ```
 
-Or use the menu bar app (recommended):
-```bash
-python3 menubar_app.py
-```
+The watcher also serves a settings dashboard at `http://localhost:8766`. Open `ClaudeCards.app` or visit the URL directly to change settings and view usage stats.
 
 ### 6. (Optional) Auto-start on login
 
-Edit the template LaunchAgent files in `launchagents/` to use your paths, then install:
+Edit the template LaunchAgent file in `launchagents/` to use your paths, then install:
 
 ```bash
-# Edit both files: replace /path/to with your actual paths
+# Edit the file: replace /path/to with your actual path
 cp launchagents/com.claudecards.flashcardwatcher.plist ~/Library/LaunchAgents/
-cp launchagents/com.claudecards.menubar.plist ~/Library/LaunchAgents/
-
 launchctl load ~/Library/LaunchAgents/com.claudecards.flashcardwatcher.plist
-launchctl load ~/Library/LaunchAgents/com.claudecards.menubar.plist
 ```
 
 ### 7. (Optional) Install the Chrome extension
@@ -116,9 +110,11 @@ launchctl load ~/Library/LaunchAgents/com.claudecards.menubar.plist
 3. Or click the extension icon and press "Create Flashcard"
 
 ### Alternative capture methods
-- **Dock app**: Drag `ClaudeCards.app` to your Dock, click to capture
-- **Spotlight**: Press Cmd+Space, type "ClaudeCards", press Enter
 - **Terminal**: `./capture_for_flashcard.sh`
+
+### Settings & Usage
+- **Dock app**: Click `ClaudeCards.app` to open the dashboard
+- **Browser**: Visit `http://localhost:8766`
 
 ## Configuration
 
@@ -155,12 +151,12 @@ macOS Automator shortcuts can be flaky. Try these steps in order:
 4. Check if cards are queued: look at `pending_cards.json`
 
 ### Extension not connecting
-1. Check watcher is running (look for the menu bar icon)
+1. Check watcher is running: visit `http://localhost:8766` — if the dashboard loads, it's running
 2. Verify `http://localhost:8766/status` returns `{"status": "running"}`
 
 ### Watcher not processing
 1. Check logs: `tail -f flashcard_watcher.log`
-2. Restart via menu bar: Stop Watcher > Start Watcher
+2. Restart: stop the process and run `python3 flashcard_watcher.py` again
 
 ## License
 
@@ -172,4 +168,3 @@ Built with:
 - [Anthropic Claude API](https://www.anthropic.com/)
 - [AnkiConnect](https://github.com/FooSoft/anki-connect)
 - [watchdog](https://github.com/gorakhargosh/watchdog)
-- [rumps](https://github.com/jaredks/rumps)

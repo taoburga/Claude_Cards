@@ -1,6 +1,5 @@
 #!/bin/bash
-# Claude Cards - Screenshot Capture App
-# Drag this app to your Dock for quick access
+# Claude Cards - Dashboard
+# Opens the Claude Cards settings and usage dashboard
 
-SCRIPT_DIR="$(cd "$(dirname "$0")/../../.." && pwd)"
-"$SCRIPT_DIR/capture_for_flashcard.sh"
+open "http://localhost:8766"

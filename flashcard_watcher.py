@@ -13,7 +13,6 @@ import html as html_module
 import logging
 from logging.handlers import RotatingFileHandler
 import subprocess
-import re
 import threading
 from pathlib import Path
 from datetime import datetime
@@ -1142,8 +1141,573 @@ class ScreenshotHandler(FileSystemEventHandler):
             )
 
 
+DASHBOARD_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Cards</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --claude-orange: #E07A3A;
+    --claude-orange-light: #F5A66A;
+    --claude-orange-glow: rgba(224, 122, 58, 0.15);
+    --claude-cream: #FDF6F0;
+    --claude-warm-white: #FEFCFA;
+    --claude-tan: #E8DDD3;
+    --claude-brown: #6B5B4E;
+    --claude-dark: #2D2420;
+    --claude-text: #3D322A;
+    --claude-text-light: #8B7D72;
+    --claude-green: #5BA67A;
+    --claude-red: #D45B5B;
+    --radius: 16px;
+    --radius-sm: 10px;
+    --shadow: 0 2px 12px rgba(45, 36, 32, 0.08);
+    --shadow-hover: 0 4px 20px rgba(45, 36, 32, 0.12);
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--claude-cream);
+    color: var(--claude-text);
+    min-height: 100vh;
+    padding: 40px 20px;
+  }
+
+  .container {
+    max-width: 640px;
+    margin: 0 auto;
+  }
+
+  /* Header */
+  .header {
+    text-align: center;
+    margin-bottom: 36px;
+  }
+
+  .logo {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+
+  .logo-icon {
+    width: 40px;
+    height: 40px;
+    background: var(--claude-orange);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    color: white;
+    box-shadow: 0 2px 8px rgba(224, 122, 58, 0.3);
+  }
+
+  .logo h1 {
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--claude-dark);
+    letter-spacing: -0.5px;
+  }
+
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 500;
+    background: rgba(91, 166, 122, 0.12);
+    color: var(--claude-green);
+  }
+
+  .status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--claude-green);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* Cards */
+  .card {
+    background: var(--claude-warm-white);
+    border-radius: var(--radius);
+    padding: 24px;
+    margin-bottom: 16px;
+    box-shadow: var(--shadow);
+    border: 1px solid rgba(232, 221, 211, 0.6);
+    transition: box-shadow 0.2s;
+  }
+
+  .card:hover { box-shadow: var(--shadow-hover); }
+
+  .card-title {
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--claude-text-light);
+    margin-bottom: 16px;
+  }
+
+  /* Stats grid */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+
+  .stat {
+    text-align: center;
+    padding: 16px 8px;
+    background: var(--claude-cream);
+    border-radius: var(--radius-sm);
+  }
+
+  .stat-value {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--claude-dark);
+    line-height: 1.1;
+  }
+
+  .stat-value.cost { color: var(--claude-orange); }
+
+  .stat-label {
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--claude-text-light);
+    margin-top: 4px;
+  }
+
+  /* Form elements */
+  .field {
+    margin-bottom: 16px;
+  }
+
+  .field:last-child { margin-bottom: 0; }
+
+  .field label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--claude-text);
+    margin-bottom: 6px;
+  }
+
+  .field select, .field input[type="text"] {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1.5px solid var(--claude-tan);
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    font-family: inherit;
+    color: var(--claude-text);
+    background: var(--claude-warm-white);
+    transition: border-color 0.2s, box-shadow 0.2s;
+    appearance: none;
+    -webkit-appearance: none;
+  }
+
+  .field select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 5l3 3 3-3' fill='none' stroke='%238B7D72' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 36px;
+  }
+
+  .field select:focus, .field input:focus {
+    outline: none;
+    border-color: var(--claude-orange);
+    box-shadow: 0 0 0 3px var(--claude-orange-glow);
+  }
+
+  /* Checkbox group */
+  .checkbox-group {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 500;
+    border: 1.5px solid var(--claude-tan);
+    background: var(--claude-warm-white);
+    cursor: pointer;
+    transition: all 0.2s;
+    user-select: none;
+  }
+
+  .chip:hover { border-color: var(--claude-orange-light); }
+
+  .chip.active {
+    background: var(--claude-orange-glow);
+    border-color: var(--claude-orange);
+    color: var(--claude-orange);
+  }
+
+  .chip input { display: none; }
+
+  /* Toggle */
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 0;
+  }
+
+  .toggle-label {
+    font-size: 14px;
+    color: var(--claude-text);
+  }
+
+  .toggle {
+    position: relative;
+    width: 44px;
+    height: 24px;
+    cursor: pointer;
+  }
+
+  .toggle input { display: none; }
+
+  .toggle-track {
+    width: 100%;
+    height: 100%;
+    background: var(--claude-tan);
+    border-radius: 12px;
+    transition: background 0.2s;
+  }
+
+  .toggle input:checked + .toggle-track { background: var(--claude-orange); }
+
+  .toggle-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 20px;
+    height: 20px;
+    background: white;
+    border-radius: 50%;
+    transition: transform 0.2s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  }
+
+  .toggle input:checked ~ .toggle-thumb { transform: translateX(20px); }
+
+  /* Prompt */
+  .field textarea {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1.5px solid var(--claude-tan);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    color: var(--claude-text);
+    background: var(--claude-warm-white);
+    resize: vertical;
+    min-height: 80px;
+    line-height: 1.5;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+
+  .field textarea:focus {
+    outline: none;
+    border-color: var(--claude-orange);
+    box-shadow: 0 0 0 3px var(--claude-orange-glow);
+  }
+
+  /* Save button */
+  .save-btn {
+    width: 100%;
+    padding: 12px;
+    border: none;
+    border-radius: var(--radius-sm);
+    font-size: 15px;
+    font-weight: 600;
+    font-family: inherit;
+    color: white;
+    background: var(--claude-orange);
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-top: 20px;
+    box-shadow: 0 2px 8px rgba(224, 122, 58, 0.25);
+  }
+
+  .save-btn:hover {
+    background: var(--claude-orange-light);
+    box-shadow: 0 4px 12px rgba(224, 122, 58, 0.35);
+    transform: translateY(-1px);
+  }
+
+  .save-btn:active { transform: translateY(0); }
+
+  .save-btn.saved {
+    background: var(--claude-green);
+    box-shadow: 0 2px 8px rgba(91, 166, 122, 0.25);
+  }
+
+  /* Footer */
+  .footer {
+    text-align: center;
+    margin-top: 32px;
+    font-size: 12px;
+    color: var(--claude-text-light);
+  }
+
+  /* Toast */
+  .toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(80px);
+    padding: 10px 20px;
+    background: var(--claude-dark);
+    color: white;
+    border-radius: 20px;
+    font-size: 13px;
+    font-weight: 500;
+    opacity: 0;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    pointer-events: none;
+  }
+
+  .toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <div class="logo">
+      <div class="logo-icon">&#9827;</div>
+      <h1>Claude Cards</h1>
+    </div>
+    <div class="status-pill">
+      <span class="status-dot"></span>
+      Watcher running
+    </div>
+  </div>
+
+  <div class="card" id="stats-card">
+    <div class="card-title">Usage</div>
+    <div class="stats-grid">
+      <div class="stat">
+        <div class="stat-value" id="cards-count">-</div>
+        <div class="stat-label">Cards</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value cost" id="total-cost">-</div>
+        <div class="stat-label">Total cost</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" id="today-cards">-</div>
+        <div class="stat-label">Today</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Settings</div>
+
+    <div class="field">
+      <label>Model</label>
+      <select id="model">
+        <option value="claude-haiku-4-5">Haiku &mdash; fast &amp; cheap</option>
+        <option value="claude-sonnet-4-6">Sonnet &mdash; balanced</option>
+        <option value="claude-opus-4-6">Opus &mdash; best quality</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label>Anki Deck</label>
+      <input type="text" id="anki-deck" placeholder="Concepts">
+    </div>
+
+    <div class="field">
+      <label>Include Image</label>
+      <select id="include-image">
+        <option value="auto">Auto (diagrams only)</option>
+        <option value="always">Always</option>
+        <option value="never">Never</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label>Card Types</label>
+      <div class="checkbox-group">
+        <label class="chip" data-type="basic">
+          <input type="checkbox" value="basic"> Basic
+        </label>
+        <label class="chip" data-type="cloze">
+          <input type="checkbox" value="cloze"> Cloze
+        </label>
+        <label class="chip" data-type="reverse">
+          <input type="checkbox" value="reverse"> Reverse
+        </label>
+      </div>
+    </div>
+
+    <div class="field">
+      <div class="toggle-row">
+        <span class="toggle-label">Check for duplicates</span>
+        <label class="toggle">
+          <input type="checkbox" id="check-duplicates">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+    </div>
+
+    <div class="field">
+      <div class="toggle-row">
+        <span class="toggle-label">Preview before save</span>
+        <label class="toggle">
+          <input type="checkbox" id="preview-before-save">
+          <div class="toggle-track"></div>
+          <div class="toggle-thumb"></div>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Prompt</div>
+    <div class="field">
+      <textarea id="prompt" rows="5"></textarea>
+    </div>
+  </div>
+
+  <button class="save-btn" onclick="saveConfig()">Save Changes</button>
+
+  <div class="footer">
+    Listening on screenshots/ &middot; localhost:8766
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  async function loadConfig() {
+    try {
+      const res = await fetch('/api/config');
+      const cfg = await res.json();
+      document.getElementById('model').value = cfg.model || 'claude-sonnet-4-6';
+      document.getElementById('anki-deck').value = cfg.anki_deck || 'Concepts';
+      document.getElementById('include-image').value = cfg.include_image || 'auto';
+      document.getElementById('check-duplicates').checked = cfg.check_duplicates !== false;
+      document.getElementById('preview-before-save').checked = !!cfg.preview_before_save;
+      document.getElementById('prompt').value = cfg.prompt || '';
+
+      const types = cfg.card_types || ['basic'];
+      document.querySelectorAll('.chip').forEach(chip => {
+        const cb = chip.querySelector('input');
+        const active = types.includes(cb.value);
+        cb.checked = active;
+        chip.classList.toggle('active', active);
+      });
+    } catch (e) {
+      showToast('Could not load config');
+    }
+  }
+
+  async function loadUsage() {
+    try {
+      const res = await fetch('/api/usage');
+      const stats = await res.json();
+      document.getElementById('cards-count').textContent = stats.cards_created || 0;
+      document.getElementById('total-cost').textContent =
+        '$' + (stats.total_cost || 0).toFixed(2);
+      const today = new Date().toISOString().split('T')[0];
+      const todayStats = (stats.daily_stats || {})[today];
+      document.getElementById('today-cards').textContent =
+        todayStats ? todayStats.cards : 0;
+    } catch (e) {
+      // Usage file might not exist yet
+    }
+  }
+
+  async function saveConfig() {
+    const cardTypes = [];
+    document.querySelectorAll('.chip input:checked').forEach(cb => cardTypes.push(cb.value));
+
+    const config = {
+      model: document.getElementById('model').value,
+      anki_deck: document.getElementById('anki-deck').value,
+      include_image: document.getElementById('include-image').value,
+      card_types: cardTypes.length ? cardTypes : ['basic'],
+      check_duplicates: document.getElementById('check-duplicates').checked,
+      preview_before_save: document.getElementById('preview-before-save').checked,
+      prompt: document.getElementById('prompt').value,
+    };
+
+    try {
+      const res = await fetch('/api/config', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(config),
+      });
+      if (res.ok) {
+        const btn = document.querySelector('.save-btn');
+        btn.textContent = 'Saved!';
+        btn.classList.add('saved');
+        setTimeout(() => { btn.textContent = 'Save Changes'; btn.classList.remove('saved'); }, 1500);
+      } else {
+        showToast('Save failed');
+      }
+    } catch (e) {
+      showToast('Could not reach watcher');
+    }
+  }
+
+  function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 2500);
+  }
+
+  // Chip toggle behavior
+  document.querySelectorAll('.chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const cb = chip.querySelector('input');
+      cb.checked = !cb.checked;
+      chip.classList.toggle('active', cb.checked);
+    });
+  });
+
+  loadConfig();
+  loadUsage();
+</script>
+</body>
+</html>
+"""
+
+
 class ExtensionRequestHandler(BaseHTTPRequestHandler):
-    """HTTP handler for browser extension requests."""
+    """HTTP handler for browser extension and dashboard requests."""
 
     # Simple rate limiter: max 10 requests per 60 seconds
     _request_times = []
@@ -1183,7 +1747,7 @@ class ExtensionRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        """Handle GET requests (status check)."""
+        """Handle GET requests."""
         if self.path == '/status':
             self.send_response(200)
             self.send_cors_headers()
@@ -1191,13 +1755,65 @@ class ExtensionRequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
             response = {'status': 'running', 'version': '1.0'}
             self.wfile.write(json.dumps(response).encode())
+        elif self.path == '/' or self.path == '/dashboard':
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html')
+            self.end_headers()
+            self.wfile.write(DASHBOARD_HTML.encode())
+        elif self.path == '/api/config':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            reload_config()
+            safe_config = {k: v for k, v in CONFIG.items() if k != 'anthropic_api_key'}
+            safe_config['has_api_key'] = bool(CONFIG.get('anthropic_api_key'))
+            self.wfile.write(json.dumps(safe_config).encode())
+        elif self.path == '/api/usage':
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            stats = load_usage_stats()
+            self.wfile.write(json.dumps(stats).encode())
         else:
             self.send_response(404)
             self.end_headers()
 
     def do_POST(self):
-        """Handle POST requests (create flashcard)."""
-        if self.path == '/create-flashcard':
+        """Handle POST requests."""
+        if self.path == '/api/config':
+            try:
+                content_length = int(self.headers.get('Content-Length', 0))
+                if content_length > 100_000:
+                    self.send_response(413)
+                    self.end_headers()
+                    return
+                body = self.rfile.read(content_length)
+                updates = json.loads(body.decode())
+                # Whitelist of editable fields
+                allowed = {'anki_deck', 'model', 'include_image', 'card_types',
+                           'preview_before_save', 'check_duplicates', 'prompt'}
+                filtered = {k: v for k, v in updates.items() if k in allowed}
+                # Load current config, merge, save
+                try:
+                    with open(CONFIG_PATH) as f:
+                        current = json.load(f)
+                except Exception:
+                    current = {}
+                current.update(filtered)
+                with open(CONFIG_PATH, 'w') as f:
+                    json.dump(current, f, indent=2)
+                reload_config()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'ok': True}).encode())
+            except Exception as e:
+                logger.error(f"Config update error: {e}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'Failed to save config'}).encode())
+        elif self.path == '/create-flashcard':
             # Reject requests not from a Chrome extension
             origin = self.headers.get('Origin', '')
             if not origin.startswith('chrome-extension://'):

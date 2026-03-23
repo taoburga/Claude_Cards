@@ -11,8 +11,6 @@ ENV/
 *.log
 flashcard_watcher_stdout.log
 flashcard_watcher_stderr.log
-menubar_stdout.log
-menubar_stderr.log
 
 # Config with secrets
 config.json
@@ -43,6 +41,9 @@ watcher.pid
 
 # Claude Code worktrees
 .claude/
+
+# Session logs (dev notes)
+session-logs/
 
 # R history (stray file)
 .Rhistory
